@@ -541,7 +541,8 @@ function AddProcessModal({
       if (!res.ok) throw new Error("API error");
       const data = await res.json();
 
-      if (data.needs_clarification && data.clarification_question && newHistory.length === 0) {
+      // Allow up to 2 clarification rounds before forcing a decision
+      if (data.needs_clarification && data.clarification_question && newHistory.length < 2) {
         setClarifyHistory(newHistory);
         setClarifyInput("");
         setScreen({

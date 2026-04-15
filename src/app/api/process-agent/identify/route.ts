@@ -1,19 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { IdentifyResponseSchema } from "@/lib/process-agent/schemas";
+import { rankTemplates } from "@/lib/process-catalog/matcher";
+import type { ProcessTemplate } from "@/lib/process-catalog/templates";
 
 const client = new Anthropic();
 
-const SYSTEM = `You are a calm, plain-language assistant helping people identify which immigration or administrative process applies to their situation.
+// Minimum keyword score to return template matches directly without Claude
+const TEMPLATE_CONFIDENCE_THRESHOLD = 0.5;
 
-You must:
-- Identify the most likely process or processes worldwide — not limited to any one country.
-- Detect the relevant jurisdiction and destination country from context clues.
-- Return 1–3 candidates ranked by confidence.
-- Ask at most one short clarifying question if genuinely ambiguous.
-- Never sound legalistic. Never guarantee outcomes.
-- Always surface uncertainty.
-- Return ONLY valid JSON. No markdown, no explanation.`;
+function templateToCandidate(t: ProcessTemplate, score: number) {
+  return {
+    id: t.id,
+    name: t.title,
+    description: t.summary,
+    country: t.destination_country,
+    destination_country: t.destination_country,
+    authority_name: t.authority_name,
+    confidence: Math.min(0.7 + score * 0.25, 0.95),
+  };
+}
+
+const SYSTEM = `Immigration process identifier. Return ONLY valid JSON, no prose.`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,64 +36,65 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "description is required" }, { status: 400 });
     }
 
+    const newHistory = clarification_answer && history
+      ? [...history, { question: (history[history.length - 1]?.question ?? ""), answer: clarification_answer }]
+      : history ?? [];
+
+    // ── Template pre-check ─────────────────────────────────────────────────
+    // For well-known processes we can skip the Claude call entirely.
+    // Only bypass if this is the first call (no clarification history yet).
+    if (newHistory.length === 0 && !clarification_answer) {
+      const templateMatches = rankTemplates(description, 3, TEMPLATE_CONFIDENCE_THRESHOLD);
+      if (templateMatches.length > 0) {
+        return NextResponse.json({
+          candidates: templateMatches.map(({ template, score }) =>
+            templateToCandidate(template, score)
+          ),
+          needs_clarification: false,
+          clarification_question: null,
+          clarification_options: null,
+        });
+      }
+    }
+
+    // ── Claude fallback ────────────────────────────────────────────────────
+    const alreadyClarified = newHistory.length >= 2 || !!clarification_answer;
+
     const historyBlock =
-      history && history.length > 0
-        ? "\n\nPrevious clarifications:\n" +
-          history.map((h) => `Q: ${h.question}\nA: ${h.answer}`).join("\n")
+      newHistory.length > 0
+        ? "\nClarifications:\n" +
+          newHistory.map((h) => `Q: ${h.question}\nA: ${h.answer}`).join("\n")
         : "";
 
     const clarificationLine = clarification_answer
-      ? `\nLatest clarification answer: "${clarification_answer}"`
+      ? `\nLatest answer: "${clarification_answer}"`
       : "";
 
-    const alreadyClarified = (history?.length ?? 0) > 0 || !!clarification_answer;
+    const prompt = `Situation: "${description}"${historyBlock}${clarificationLine}
 
-    const prompt = `User description: "${description}"${historyBlock}${clarificationLine}
+Identify 1–3 immigration/admin process candidates.
 
-Identify the most likely immigration or administrative process(es) for this person.
-
-Consider:
-- What country are they in / moving to?
-- What is their nationality (if mentioned)?
-- What is the purpose (work, study, family, residence, citizenship)?
-- Which government authority handles this?
-
-Return 1–3 candidates. Each candidate needs:
-- id: a short snake_case identifier (e.g. "uk_student_visa", "se_work_permit", "de_residence_permit")
-- name: formal process name in English
-- description: 1–2 sentence plain-language explanation
-- country: the country where the user currently is or is coming from
-- destination_country: the country they are applying to / moving to
-- authority_name: the government body responsible
-- confidence: 0.0–1.0
-
-${
-  alreadyClarified
-    ? "A clarification was already asked. Do NOT ask again — return your best candidates."
-    : 'If the situation is genuinely ambiguous between multiple countries or process types, set needs_clarification to true and provide one short question with 2–4 answer options. Otherwise set needs_clarification to false.'
-}
-
-Return ONLY valid JSON:
+Return JSON:
 {
   "candidates": [
     {
-      "id": "...",
-      "name": "...",
-      "description": "...",
-      "country": "...",
-      "destination_country": "...",
-      "authority_name": "...",
-      "confidence": 0.0
+      "id": "<snake_case e.g. uk_student_visa>",
+      "name": "<formal name>",
+      "description": "<1 sentence>",
+      "country": "<origin country>",
+      "destination_country": "<destination country>",
+      "authority_name": "<authority>",
+      "confidence": <0.0–1.0>
     }
   ],
-  "needs_clarification": false,
-  "clarification_question": null,
-  "clarification_options": null
+  "needs_clarification": ${alreadyClarified ? "false" : "<true if genuinely ambiguous>"},
+  "clarification_question": ${alreadyClarified ? "null" : '"<one short question, or null>"'},
+  "clarification_options": ${alreadyClarified ? "null" : '["<option>", ...] or null'}
 }`;
 
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 1024,
+      max_tokens: 600,
       system: SYSTEM,
       messages: [{ role: "user", content: prompt }],
     });
@@ -105,7 +114,6 @@ Return ONLY valid JSON:
 
     if (!result.success) {
       console.error("[identify] Zod error:", result.error.flatten());
-      // Return raw parsed if shape is close enough
       return NextResponse.json(parsed);
     }
 

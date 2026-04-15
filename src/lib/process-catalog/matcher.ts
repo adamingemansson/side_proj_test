@@ -43,3 +43,28 @@ export function matchTemplate(
   if (best && best.score >= 0.3) return best;
   return null;
 }
+
+/**
+ * Rank all templates by keyword overlap with a free-text description.
+ * Returns top N matches above the threshold, sorted by score descending.
+ * Used to short-circuit the Claude identify call for well-known processes.
+ */
+export function rankTemplates(
+  description: string,
+  limit = 3,
+  threshold = 0.25
+): { template: ProcessTemplate; score: number }[] {
+  const haystack = description.toLowerCase();
+
+  const scored = PROCESS_TEMPLATES.map((template) => {
+    const hits = template.keywords.filter((kw) =>
+      haystack.includes(kw.toLowerCase())
+    ).length;
+    return { template, score: hits / template.keywords.length };
+  });
+
+  return scored
+    .filter((r) => r.score >= threshold)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
