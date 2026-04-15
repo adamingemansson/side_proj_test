@@ -17,7 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { DEMO_PROCESSES } from "@/lib/data/processes";
+import { useProcesses } from "@/hooks/useProcesses";
 import { DEMO_DOCUMENTS } from "@/lib/data/documents";
 import { formatDateShort } from "@/lib/utils";
 import type { Process, ProcessStep, ProcessStepStatus } from "@/types";
@@ -395,7 +395,8 @@ function ProcessTimeline({ process }: { process: Process }) {
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export function TimelinesTab() {
-  const activeProcesses = DEMO_PROCESSES.filter((p) => p.status === "active");
+  const { processes } = useProcesses();
+  const activeProcesses = processes.filter((p) => p.status === "active");
 
   return (
     <div className="space-y-6">

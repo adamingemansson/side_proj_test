@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CalendarClock, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DEMO_PROCESSES } from "@/lib/data/processes";
+import { useProcesses } from "@/hooks/useProcesses";
 import { formatDateShort } from "@/lib/utils";
 import type { Process } from "@/types";
 
@@ -233,9 +233,9 @@ interface UpcomingItem {
   daysLeft: number;
 }
 
-function buildUpcomingItems(): UpcomingItem[] {
+function buildUpcomingItems(processes: Process[]): UpcomingItem[] {
   const items: UpcomingItem[] = [];
-  for (const proc of DEMO_PROCESSES) {
+  for (const proc of processes) {
     for (const step of proc.steps) {
       if (step.deadline && step.status !== "completed") {
         items.push({
@@ -261,9 +261,10 @@ export function OverviewTab({
   onSwitchToTimelines: () => void;
 }) {
   const [activeProcess, setActiveProcess] = useState<Process | null>(null);
+  const { processes } = useProcesses();
 
-  const activeProcesses = DEMO_PROCESSES.filter((p) => p.status === "active");
-  const upcomingItems = buildUpcomingItems();
+  const activeProcesses = processes.filter((p) => p.status === "active");
+  const upcomingItems = buildUpcomingItems(processes);
 
   return (
     <div className="space-y-8 pb-6">

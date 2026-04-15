@@ -15,7 +15,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { DEMO_PROCESSES } from "@/lib/data/processes";
+import { useProcesses } from "@/hooks/useProcesses";
 import { DEMO_DOCUMENTS } from "@/lib/data/documents";
 import { formatDateShort, categoryLabel } from "@/lib/utils";
 import type { ChecklistItem, Process } from "@/types";
@@ -323,7 +323,8 @@ function ProcessChecklist({ process }: { process: Process }) {
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export function ChecklistsTab() {
-  const activeProcesses = DEMO_PROCESSES.filter((p) => p.status === "active");
+  const { processes } = useProcesses();
+  const activeProcesses = processes.filter((p) => p.status === "active");
 
   const totalOverdue = activeProcesses.reduce((sum, proc) => {
     const items = buildProcessChecklist(proc);
