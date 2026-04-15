@@ -10,25 +10,28 @@ import { ProcessesTab } from "@/components/dashboard/ProcessesTab";
 import { DocumentsTab } from "@/components/dashboard/DocumentsTab";
 import { TimelinesTab } from "@/components/dashboard/TimelinesTab";
 import { ChecklistsTab } from "@/components/dashboard/ChecklistsTab";
+import { AnalyseDocumentTab } from "@/components/dashboard/AnalyseDocumentTab";
 import { DemoModePanel } from "@/components/dashboard/DemoModePanel";
 
 type DashboardTab =
   | "overview"
   | "processes"
   | "documents"
+  | "analyse"
   | "timelines"
   | "checklists"
   | "inbox"
   | "support";
 
 const TABS: { id: DashboardTab; label: string }[] = [
-  { id: "overview",   label: "Overview"   },
-  { id: "processes",  label: "Processes"  },
-  { id: "documents",  label: "Documents"  },
-  { id: "timelines",  label: "Timelines"  },
-  { id: "checklists", label: "Checklists" },
-  { id: "inbox",      label: "Inbox"      },
-  { id: "support",    label: "Support"    },
+  { id: "overview",   label: "Overview"          },
+  { id: "processes",  label: "Processes"         },
+  { id: "documents",  label: "Documents"         },
+  { id: "analyse",    label: "Analyse Document"  },
+  { id: "timelines",  label: "Timelines"         },
+  { id: "checklists", label: "Checklists"        },
+  { id: "inbox",      label: "Inbox"             },
+  { id: "support",    label: "Support"           },
 ];
 
 function DashboardShell() {
@@ -136,9 +139,14 @@ function DashboardShell() {
           <ChecklistsTab />
         )}
 
+        {activeTab === "analyse" && (
+          <AnalyseDocumentTab />
+        )}
+
         {activeTab !== "overview" &&
           activeTab !== "processes" &&
           activeTab !== "documents" &&
+          activeTab !== "analyse" &&
           activeTab !== "timelines" &&
           activeTab !== "checklists" && (
           <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-neutral-200 bg-neutral-50">
