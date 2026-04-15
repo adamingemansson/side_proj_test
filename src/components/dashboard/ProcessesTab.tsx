@@ -907,11 +907,11 @@ function AddProcessModal({
 
 export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () => void }) {
   const { data: session, status } = useSession();
-  const demoMode = status !== "loading" && !session?.user?.id;
+  const [demoMode, setDemoMode] = useState(false);
 
   const [showModal, setShowModal] = useState(false);
   const [processes, setProcesses] = useState<ProcessRowWithSteps[]>([]);
-  const [loading, setLoading] = useState(!demoMode);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchProcesses = useCallback(async () => {
@@ -968,9 +968,21 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-neutral-500">
-          {loading ? "Loading…" : `${activeCount} active · ${processes.length} total`}
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-neutral-500">
+            {loading ? "Loading…" : `${activeCount} active · ${processes.length} total`}
+          </p>
+          <button
+            onClick={() => setDemoMode((d) => !d)}
+            className={`rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              demoMode
+                ? "border-navy bg-navy text-white"
+                : "border-neutral-200 bg-neutral-50 text-neutral-500 hover:border-neutral-300"
+            }`}
+          >
+            {demoMode ? "Demo on" : "Demo"}
+          </button>
+        </div>
         <Button onClick={() => setShowModal(true)}>
           <Plus className="h-4 w-4" />
           Add new process
