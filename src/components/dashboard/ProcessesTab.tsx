@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSession } from "next-auth/react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -24,7 +25,179 @@ import { formatDateShort } from "@/lib/utils";
 import type { CandidateProcess, FullPlan } from "@/lib/process-agent/schemas";
 import type { ProcessRowWithSteps, ProcessStepRow, ProcessChecklistItemRow } from "@/lib/db";
 
-// ── Utilities ──────────────────────────────────────────────────────────────
+// ── Demo data ──────────────────────────────────────────────────────────────
+
+const DEMO_CANDIDATES: CandidateProcess[] = [
+  {
+    id: "se_work_permit",
+    name: "Work Permit (Arbetstillstånd) — Sweden",
+    description: "For non-EU/EEA nationals offered employment in Sweden.",
+    country: "Sweden",
+    destination_country: "Sweden",
+    authority_name: "Migrationsverket",
+    confidence: 0.92,
+  },
+  {
+    id: "uk_student_visa",
+    name: "UK Student Visa (Student Route)",
+    description: "For international students studying full-time at a licensed UK institution.",
+    country: "United Kingdom",
+    destination_country: "United Kingdom",
+    authority_name: "UK Home Office / UKVI",
+    confidence: 0.87,
+  },
+  {
+    id: "se_residence_permit_renewal",
+    name: "Residence Permit Renewal — Sweden",
+    description: "Renewing an existing residence permit to continue living in Sweden.",
+    country: "Sweden",
+    destination_country: "Sweden",
+    authority_name: "Migrationsverket",
+    confidence: 0.80,
+  },
+];
+
+function buildDemoProcess(candidate: CandidateProcess): ProcessRowWithSteps {
+  const now = new Date().toISOString();
+  const processId = `demo-${Date.now()}`;
+
+  const isUK = candidate.destination_country === "United Kingdom";
+
+  const steps: (ProcessStepRow & { checklist_items: ProcessChecklistItemRow[] })[] = isUK
+    ? [
+        {
+          id: `${processId}-s1`, process_id: processId, order_index: 0,
+          title: "Receive CAS from your institution",
+          description: "Your university issues a Confirmation of Acceptance for Studies (CAS) reference number.",
+          status: "in_progress", estimated_duration: "Varies", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c1`, process_step_id: `${processId}-s1`, label: "Unconditional offer letter received", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c2`, process_step_id: `${processId}-s1`, label: "CAS number issued by institution", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+        {
+          id: `${processId}-s2`, process_id: processId, order_index: 1,
+          title: "Gather required documents",
+          description: "Collect passport, proof of funds, and any required certificates before applying.",
+          status: "not_started", estimated_duration: "1–2 weeks", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c3`, process_step_id: `${processId}-s2`, label: "Valid passport", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c4`, process_step_id: `${processId}-s2`, label: "Proof of funds (28 consecutive days in account)", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c5`, process_step_id: `${processId}-s2`, label: "English language certificate (if required)", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+        {
+          id: `${processId}-s3`, process_id: processId, order_index: 2,
+          title: "Apply online and pay fees",
+          description: "Submit application on gov.uk and pay the visa fee and Immigration Health Surcharge.",
+          status: "not_started", estimated_duration: "1–2 days", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c6`, process_step_id: `${processId}-s3`, label: "Online application submitted", completed: false, item_type: "action", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c7`, process_step_id: `${processId}-s3`, label: "Visa fee paid (£363)", completed: false, item_type: "payment", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c8`, process_step_id: `${processId}-s3`, label: "Immigration Health Surcharge paid", completed: false, item_type: "payment", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+        {
+          id: `${processId}-s4`, process_id: processId, order_index: 3,
+          title: "Biometrics appointment",
+          description: "Attend a UKVI Visa Application Centre to submit biometric data.",
+          status: "not_started", estimated_duration: "1–4 weeks to get appointment", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c9`, process_step_id: `${processId}-s4`, label: "VAC appointment booked", completed: false, item_type: "appointment", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c10`, process_step_id: `${processId}-s4`, label: "Biometrics submitted", completed: false, item_type: "appointment", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+        {
+          id: `${processId}-s5`, process_id: processId, order_index: 4,
+          title: "Await decision and collect BRP",
+          description: "Standard processing up to 12 weeks. Collect your Biometric Residence Permit within 10 days of arrival.",
+          status: "not_started", estimated_duration: "3–12 weeks", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c11`, process_step_id: `${processId}-s5`, label: "Visa decision received", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c12`, process_step_id: `${processId}-s5`, label: "BRP collected within 10 days of arrival", completed: false, item_type: "action", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+      ]
+    : [
+        {
+          id: `${processId}-s1`, process_id: processId, order_index: 0,
+          title: "Gather required documents",
+          description: "Collect all supporting documents before submitting your application.",
+          status: "in_progress", estimated_duration: "1–2 weeks", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c1`, process_step_id: `${processId}-s1`, label: "Valid passport (min. 6 months remaining)", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c2`, process_step_id: `${processId}-s1`, label: "Employment contract or offer letter", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c3`, process_step_id: `${processId}-s1`, label: "Passport-style photo", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+        {
+          id: `${processId}-s2`, process_id: processId, order_index: 1,
+          title: "Submit application online",
+          description: "Apply via Migrationsverket's e-service and pay the application fee.",
+          status: "not_started", estimated_duration: "1–3 days", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c4`, process_step_id: `${processId}-s2`, label: "Online application submitted", completed: false, item_type: "action", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c5`, process_step_id: `${processId}-s2`, label: "Application fee paid", completed: false, item_type: "payment", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c6`, process_step_id: `${processId}-s2`, label: "Case number saved", completed: false, item_type: "action", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+        {
+          id: `${processId}-s3`, process_id: processId, order_index: 2,
+          title: "Biometrics or service centre appointment",
+          description: "Attend an appointment to submit biometric data if required by Migrationsverket.",
+          status: "not_started", estimated_duration: "1–4 weeks", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c7`, process_step_id: `${processId}-s3`, label: "Check if appointment is required", completed: false, item_type: "action", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c8`, process_step_id: `${processId}-s3`, label: "Appointment booked", completed: false, item_type: "appointment", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c9`, process_step_id: `${processId}-s3`, label: "Biometrics submitted", completed: false, item_type: "appointment", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+        {
+          id: `${processId}-s4`, process_id: processId, order_index: 3,
+          title: "Await decision",
+          description: "Processing typically takes 4–8 months. Track your case online using your case number.",
+          status: "not_started", estimated_duration: "4–8 months", target_date: null, notes: null,
+          created_at: now, updated_at: now,
+          checklist_items: [
+            { id: `${processId}-c10`, process_step_id: `${processId}-s4`, label: "Case number noted for tracking", completed: false, item_type: "action", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c11`, process_step_id: `${processId}-s4`, label: "Decision received", completed: false, item_type: "document", due_date: null, notes: null, created_at: now, updated_at: now },
+            { id: `${processId}-c12`, process_step_id: `${processId}-s4`, label: "Permit card collected (if approved)", completed: false, item_type: "action", due_date: null, notes: null, created_at: now, updated_at: now },
+          ],
+        },
+      ];
+
+  return {
+    id: processId,
+    user_id: "demo",
+    title: candidate.name,
+    slug: null,
+    status: "active",
+    country: candidate.country,
+    jurisdiction: candidate.destination_country ?? candidate.country,
+    destination_country: candidate.destination_country ?? null,
+    authority_name: candidate.authority_name ?? null,
+    source_type: "ai_generated",
+    summary: candidate.description,
+    rationale: "Selected during demo walkthrough.",
+    timeline_summary: isUK ? "Apply up to 6 months before course start. Decision typically 3–12 weeks." : "Applications typically decided within 4–8 months.",
+    next_action: steps[0]?.checklist_items[0]?.label ?? "Start gathering documents.",
+    next_deadline: null,
+    confidence_score: candidate.confidence,
+    uncertainty_notes: "This is demo data. Always verify requirements with the relevant authority.",
+    created_at: now,
+    updated_at: now,
+    steps,
+  };
+}
+
 
 const TODAY = new Date();
 
@@ -335,9 +508,11 @@ function screenToStep(screen: FlowScreen): number {
 function AddProcessModal({
   onClose,
   onCreated,
+  demoMode,
 }: {
   onClose: () => void;
   onCreated: (p: ProcessRowWithSteps) => void;
+  demoMode: boolean;
 }) {
   const [screen, setScreen] = useState<FlowScreen>({ type: "describe" });
   const [description, setDescription] = useState("");
@@ -347,6 +522,11 @@ function AddProcessModal({
   // ── Identify ──────────────────────────────────────────────────────────────
 
   async function identify(desc: string, clarAnswer?: string) {
+    if (demoMode) {
+      setScreen({ type: "select", candidates: DEMO_CANDIDATES });
+      return;
+    }
+
     setScreen({ type: "loading", label: "Finding the right process…" });
     const newHistory = clarAnswer && screen.type === "clarify"
       ? [...clarifyHistory, { question: screen.question, answer: clarAnswer }]
@@ -386,6 +566,30 @@ function AddProcessModal({
     desc: string,
     history: { question: string; answer: string }[]
   ) {
+    if (demoMode) {
+      // Build a synthetic FullPlan from the candidate for the confirm screen
+      const demoPlan: FullPlan = {
+        title: candidate.name,
+        jurisdiction: candidate.destination_country ?? candidate.country,
+        destination_country: candidate.destination_country,
+        authority_name: candidate.authority_name ?? "",
+        summary: candidate.description,
+        rationale: "Based on your description, this is the most likely applicable process.",
+        confidence_score: candidate.confidence,
+        uncertainty_notes: "This is demo data. Verify all requirements with the relevant authority before acting.",
+        timeline_summary: candidate.destination_country === "United Kingdom"
+          ? "Apply up to 6 months before your course or job start date. Decision typically within 3–12 weeks."
+          : "Processing typically takes 4–8 months. Apply as early as possible.",
+        next_action: "Start gathering required documents.",
+        next_deadline: null,
+        steps: [],
+        source_notes: "Demo mode — no AI was used.",
+        official_sources: [],
+      };
+      setScreen({ type: "confirm", plan: demoPlan, candidate });
+      return;
+    }
+
     setScreen({ type: "loading", label: "Building your process plan…" });
     try {
       const res = await fetch("/api/process-agent/plan", {
@@ -405,7 +609,16 @@ function AddProcessModal({
 
   async function createProcess() {
     if (screen.type !== "confirm") return;
-    const { plan } = screen;
+    const { plan, candidate } = screen;
+
+    // Demo mode: build the process locally, no API call
+    if (demoMode) {
+      const localProcess = buildDemoProcess(candidate);
+      onCreated(localProcess);
+      onClose();
+      return;
+    }
+
     setScreen({ type: "creating" });
     try {
       const res = await fetch("/api/process-agent/create", {
@@ -693,12 +906,16 @@ function AddProcessModal({
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () => void }) {
+  const { data: session, status } = useSession();
+  const demoMode = status !== "loading" && !session?.user?.id;
+
   const [showModal, setShowModal] = useState(false);
   const [processes, setProcesses] = useState<ProcessRowWithSteps[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!demoMode);
   const [error, setError] = useState<string | null>(null);
 
   const fetchProcesses = useCallback(async () => {
+    if (demoMode) { setLoading(false); return; }
     try {
       const res = await fetch("/api/processes");
       if (!res.ok) throw new Error("Failed to load");
@@ -709,7 +926,7 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [demoMode]);
 
   useEffect(() => { fetchProcesses(); }, [fetchProcesses]);
 
@@ -802,6 +1019,7 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
         <AddProcessModal
           onClose={() => setShowModal(false)}
           onCreated={handleCreated}
+          demoMode={demoMode}
         />
       )}
     </div>
