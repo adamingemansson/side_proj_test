@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   AlertTriangle,
   ArrowRight,
+  CheckCircle2,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
+  Circle,
+  Clock,
   ExternalLink,
+  Globe,
   Loader2,
   MapPin,
   Plus,
@@ -14,14 +20,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { DEMO_PROCESSES } from "@/lib/data/processes";
 import { formatDateShort } from "@/lib/utils";
-import type { Process, ProcessStep } from "@/types";
-import type { IdentifyProcessResponse, ProcessMatch } from "@/app/api/identify-process/route";
-import type { ProcessQuestion } from "@/app/api/process-questions/route";
+import type { CandidateProcess, FullPlan } from "@/lib/process-agent/schemas";
+import type { ProcessRowWithSteps, ProcessStepRow, ProcessChecklistItemRow } from "@/lib/db";
 
-// Demo today
-const TODAY = new Date("2026-04-12");
+// ── Utilities ──────────────────────────────────────────────────────────────
+
+const TODAY = new Date();
 
 function daysFromNow(dateString: string): number {
   return Math.ceil(
@@ -29,12 +34,132 @@ function daysFromNow(dateString: string): number {
   );
 }
 
-// ── Process Card ───────────────────────────────────────────────────────────
+function confidenceBadgeVariant(score: number | null): "success" | "info" | "high" | "muted" {
+  if (!score) return "muted";
+  if (score >= 0.8) return "success";
+  if (score >= 0.6) return "info";
+  return "muted";
+}
 
-function ProcessCard({ process }: { process: Process }) {
+function confidenceLabel(score: number | null): string {
+  if (!score) return "Unknown confidence";
+  if (score >= 0.8) return "High confidence";
+  if (score >= 0.6) return "Medium confidence";
+  return "Low confidence";
+}
+
+const stepStatusIcon = (status: string) => {
+  if (status === "completed") return <CheckCircle2 className="h-4 w-4 text-success" strokeWidth={1.75} />;
+  if (status === "in_progress") return <Clock className="h-4 w-4 text-navy" strokeWidth={1.75} />;
+  if (status === "blocked") return <AlertTriangle className="h-4 w-4 text-warning" strokeWidth={1.75} />;
+  return <Circle className="h-4 w-4 text-neutral-300" strokeWidth={1.75} />;
+};
+
+// ── Checklist item ─────────────────────────────────────────────────────────
+
+function ChecklistItem({
+  item,
+  processId,
+  onToggle,
+}: {
+  item: ProcessChecklistItemRow;
+  processId: string;
+  onToggle: (itemId: string, completed: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2.5 cursor-pointer group">
+      <input
+        type="checkbox"
+        checked={item.completed}
+        onChange={(e) => onToggle(item.id, e.target.checked)}
+        className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-neutral-300 accent-navy"
+      />
+      <span className={`text-xs leading-relaxed ${item.completed ? "text-neutral-400 line-through" : "text-neutral-700"}`}>
+        {item.label}
+        {item.notes && (
+          <span className="ml-1 text-neutral-400 not-italic">— {item.notes}</span>
+        )}
+      </span>
+    </label>
+  );
+}
+
+// ── Process step row ───────────────────────────────────────────────────────
+
+function ProcessStepRow({
+  step,
+  processId,
+  onToggleItem,
+}: {
+  step: ProcessStepRow & { checklist_items: ProcessChecklistItemRow[] };
+  processId: string;
+  onToggleItem: (itemId: string, completed: boolean) => void;
+}) {
+  const [open, setOpen] = useState(step.status === "in_progress");
+  const completedItems = step.checklist_items.filter((i) => i.completed).length;
+  const totalItems = step.checklist_items.length;
+
+  return (
+    <div className={`rounded-lg border ${step.status === "in_progress" ? "border-navy/20 bg-navy-light/20" : "border-neutral-100 bg-white"}`}>
+      <button
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="shrink-0">{stepStatusIcon(step.status)}</span>
+        <span className="flex-1 min-w-0">
+          <span className={`text-xs font-semibold ${step.status === "completed" ? "text-neutral-400" : "text-neutral-900"}`}>
+            {step.title}
+          </span>
+          {step.estimated_duration && (
+            <span className="ml-2 text-[10px] text-neutral-400">~{step.estimated_duration}</span>
+          )}
+        </span>
+        {totalItems > 0 && (
+          <span className="shrink-0 text-[10px] text-neutral-400">
+            {completedItems}/{totalItems}
+          </span>
+        )}
+        {open
+          ? <ChevronUp className="h-3.5 w-3.5 shrink-0 text-neutral-400" strokeWidth={1.75} />
+          : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-400" strokeWidth={1.75} />
+        }
+      </button>
+
+      {open && (
+        <div className="border-t border-neutral-100 px-4 py-3 space-y-3">
+          {step.description && (
+            <p className="text-xs leading-relaxed text-neutral-600">{step.description}</p>
+          )}
+          {step.checklist_items.length > 0 && (
+            <div className="space-y-2">
+              {step.checklist_items.map((item) => (
+                <ChecklistItem
+                  key={item.id}
+                  item={item}
+                  processId={processId}
+                  onToggle={onToggleItem}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Process card ───────────────────────────────────────────────────────────
+
+function ProcessCard({ process, onChecklistToggle }: {
+  process: ProcessRowWithSteps;
+  onChecklistToggle: (processId: string, itemId: string, completed: boolean) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const totalSteps = process.steps.length;
+  const completedSteps = process.steps.filter((s) => s.status === "completed").length;
   const currentStep = process.steps.find((s) => s.status === "in_progress");
-  const completedCount = process.steps.filter((s) => s.status === "completed").length;
-  const deadlineDays = process.nextDeadline ? daysFromNow(process.nextDeadline) : null;
+  const deadlineDays = process.next_deadline ? daysFromNow(process.next_deadline) : null;
 
   const statusVariant: Record<string, "success" | "info" | "muted" | "urgent"> = {
     active: "info",
@@ -46,99 +171,149 @@ function ProcessCard({ process }: { process: Process }) {
   return (
     <Card>
       <CardContent className="p-5">
+        {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-semibold text-neutral-950 leading-snug">{process.name}</h3>
+              <h3 className="text-sm font-semibold text-neutral-950 leading-snug">{process.title}</h3>
               <Badge variant={statusVariant[process.status] ?? "muted"}>
                 {process.status.replace("_", " ")}
               </Badge>
+              {process.confidence_score !== null && (
+                <Badge variant={confidenceBadgeVariant(process.confidence_score)}>
+                  {confidenceLabel(process.confidence_score)}
+                </Badge>
+              )}
             </div>
-            <div className="mt-1 flex items-center gap-3 text-[11px] text-neutral-500">
-              <span className="flex items-center gap-1">
-                <MapPin className="h-3 w-3" strokeWidth={1.75} />
-                {process.country}
-              </span>
-              <span>
-                {completedCount}/{process.steps.length} steps complete
-              </span>
+            <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-neutral-500">
+              {process.destination_country && (
+                <span className="flex items-center gap-1">
+                  <MapPin className="h-3 w-3" strokeWidth={1.75} />
+                  {process.destination_country}
+                </span>
+              )}
+              {process.authority_name && (
+                <span className="flex items-center gap-1">
+                  <Globe className="h-3 w-3" strokeWidth={1.75} />
+                  {process.authority_name}
+                </span>
+              )}
+              <span>{completedSteps}/{totalSteps} steps</span>
             </div>
           </div>
+
           {deadlineDays !== null && (
             <div className="shrink-0 text-right">
               <p className="text-[10px] uppercase tracking-wide text-neutral-400">Next deadline</p>
               <p className={`mt-0.5 text-xs font-semibold ${
                 deadlineDays < 0 ? "text-danger" : deadlineDays <= 14 ? "text-warning" : "text-neutral-700"
               }`}>
-                {formatDateShort(process.nextDeadline!)}
+                {formatDateShort(process.next_deadline!)}
               </p>
               <p className="text-[10px] text-neutral-400">
-                {deadlineDays < 0 ? `${Math.abs(deadlineDays)}d overdue` : `${deadlineDays}d remaining`}
+                {deadlineDays < 0 ? `${Math.abs(deadlineDays)}d overdue` : `${deadlineDays}d`}
               </p>
             </div>
           )}
         </div>
 
-        <div className="mt-4">
-          <div className="mb-1 flex justify-between text-[10px] text-neutral-400">
-            <span>Progress</span>
-            <span>{Math.round((completedCount / process.steps.length) * 100)}%</span>
+        {/* Progress bar */}
+        {totalSteps > 0 && (
+          <div className="mt-4">
+            <div className="mb-1 flex justify-between text-[10px] text-neutral-400">
+              <span>Progress</span>
+              <span>{Math.round((completedSteps / totalSteps) * 100)}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
+              <div
+                className="h-full rounded-full bg-navy transition-all"
+                style={{ width: `${(completedSteps / totalSteps) * 100}%` }}
+              />
+            </div>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
-            <div
-              className="h-full rounded-full bg-navy transition-all"
-              style={{ width: `${(completedCount / process.steps.length) * 100}%` }}
-            />
-          </div>
-        </div>
+        )}
 
+        {/* Current step */}
         {currentStep && (
           <div className="mt-3 flex items-start gap-2 rounded border border-navy-light bg-navy-light/40 px-3 py-2">
             <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-navy" strokeWidth={1.75} />
             <div>
-              <p className="text-[10px] font-semibold text-navy">Current stage</p>
+              <p className="text-[10px] font-semibold text-navy">Current step</p>
               <p className="text-[11px] text-neutral-700">{currentStep.title}</p>
             </div>
           </div>
         )}
 
-        {process.nextAction && (
+        {/* Next action */}
+        {process.next_action && (
           <p className="mt-2 text-[11px] text-neutral-500">
             <span className="font-medium text-neutral-700">Next: </span>
-            {process.nextAction}
+            {process.next_action}
           </p>
+        )}
+
+        {/* Timeline summary */}
+        {process.timeline_summary && (
+          <p className="mt-1 text-[11px] text-neutral-400">{process.timeline_summary}</p>
+        )}
+
+        {/* Expand / collapse steps */}
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-3 flex items-center gap-1 text-[11px] text-neutral-400 hover:text-navy transition-colors"
+        >
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? "Hide steps" : `Show ${totalSteps} steps`}
+        </button>
+
+        {expanded && (
+          <div className="mt-3 space-y-2">
+            {process.steps.map((step) => (
+              <ProcessStepRow
+                key={step.id}
+                step={step}
+                processId={process.id}
+                onToggleItem={(itemId, completed) =>
+                  onChecklistToggle(process.id, itemId, completed)
+                }
+              />
+            ))}
+
+            {/* Uncertainty notes */}
+            {process.uncertainty_notes && process.uncertainty_notes !== "None" && (
+              <div className="mt-2 flex items-start gap-2 rounded border border-warning/20 bg-warning/5 px-3 py-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.75} />
+                <p className="text-[11px] leading-relaxed text-neutral-600">
+                  <span className="font-medium text-neutral-700">Note: </span>
+                  {process.uncertainty_notes}
+                </p>
+              </div>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>
   );
 }
 
-// ── Add Process — Stepped Card UI ─────────────────────────────────────────
+// ── Add Process flow ───────────────────────────────────────────────────────
 
 type FlowScreen =
   | { type: "describe" }
-  | { type: "loading" }
-  | { type: "clarify"; question: string; usedDescription: string }
-  | { type: "select"; matches: ProcessMatch[] }
-  | { type: "question"; process: ProcessMatch; questions: ProcessQuestion[]; qIndex: number; answers: string[] }
-  | { type: "questions_loading"; process: ProcessMatch }
-  | { type: "summary"; process: ProcessMatch; answers: string[]; questions: ProcessQuestion[] }
+  | { type: "loading"; label: string }
+  | { type: "clarify"; question: string; options: string[] | null }
+  | { type: "select"; candidates: CandidateProcess[] }
+  | { type: "confirm"; plan: FullPlan; candidate: CandidateProcess }
+  | { type: "creating" }
   | { type: "error"; message: string };
 
 function ProgressDots({ total, current }: { total: number; current: number }) {
   return (
     <div className="flex items-center gap-1.5">
       {Array.from({ length: total }).map((_, i) => (
-        <div
-          key={i}
-          className={`rounded-full transition-all ${
-            i < current
-              ? "h-2 w-2 bg-navy/40"
-              : i === current
-              ? "h-2 w-5 bg-navy"
-              : "h-2 w-2 bg-neutral-200"
-          }`}
-        />
+        <div key={i} className={`rounded-full transition-all ${
+          i < current ? "h-2 w-2 bg-navy/40" : i === current ? "h-2 w-5 bg-navy" : "h-2 w-2 bg-neutral-200"
+        }`} />
       ))}
     </div>
   );
@@ -150,9 +325,8 @@ function screenToStep(screen: FlowScreen): number {
     case "loading": return 1;
     case "clarify": return 1;
     case "select": return 1;
-    case "questions_loading": return 2;
-    case "question": return 2;
-    case "summary": return 3;
+    case "confirm": return 2;
+    case "creating": return 3;
     default: return 0;
   }
 }
@@ -162,273 +336,233 @@ function AddProcessModal({
   onCreated,
 }: {
   onClose: () => void;
-  onCreated: (p: Process) => void;
+  onCreated: (p: ProcessRowWithSteps) => void;
 }) {
   const [screen, setScreen] = useState<FlowScreen>({ type: "describe" });
   const [description, setDescription] = useState("");
+  const [clarifyHistory, setClarifyHistory] = useState<{ question: string; answer: string }[]>([]);
+  const [clarifyInput, setClarifyInput] = useState("");
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // ── Identify ──────────────────────────────────────────────────────────────
 
-  async function identifyProcess(desc: string, clarificationAnswer?: string) {
-    setScreen({ type: "loading" });
+  async function identify(desc: string, clarAnswer?: string) {
+    setScreen({ type: "loading", label: "Finding the right process…" });
+    const newHistory = clarAnswer && screen.type === "clarify"
+      ? [...clarifyHistory, { question: screen.question, answer: clarAnswer }]
+      : clarifyHistory;
+
     try {
-      const res = await fetch("/api/identify-process", {
+      const res = await fetch("/api/process-agent/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: desc, clarification_answer: clarificationAnswer }),
-      });
-      if (!res.ok) throw new Error("API error");
-      const data: IdentifyProcessResponse = await res.json();
-
-      if (data.needs_clarification && data.clarification_question && !clarificationAnswer) {
-        setScreen({ type: "clarify", question: data.clarification_question, usedDescription: desc });
-      } else if (data.matches.length === 1 && data.matches[0].confidence >= 0.8) {
-        // High-confidence single match — go straight to follow-up questions
-        await loadQuestions(data.matches[0]);
-      } else {
-        setScreen({ type: "select", matches: data.matches });
-      }
-    } catch {
-      setScreen({ type: "error", message: "We couldn't identify a matching process. Please check your connection and try again." });
-    }
-  }
-
-  async function loadQuestions(process: ProcessMatch) {
-    setScreen({ type: "questions_loading", process });
-    try {
-      const res = await fetch("/api/process-questions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId: process.id, processName: process.name }),
+        body: JSON.stringify({ description: desc, clarification_answer: clarAnswer, history: newHistory }),
       });
       if (!res.ok) throw new Error("API error");
       const data = await res.json();
-      const questions: ProcessQuestion[] = data.questions ?? [];
-      if (questions.length === 0) {
-        setScreen({ type: "summary", process, answers: [], questions: [] });
+
+      if (data.needs_clarification && data.clarification_question && newHistory.length === 0) {
+        setClarifyHistory(newHistory);
+        setClarifyInput("");
+        setScreen({
+          type: "clarify",
+          question: data.clarification_question,
+          options: data.clarification_options ?? null,
+        });
+      } else if (data.candidates?.length === 1 && data.candidates[0].confidence >= 0.8) {
+        await buildPlan(data.candidates[0], desc, newHistory);
       } else {
-        setScreen({ type: "question", process, questions, qIndex: 0, answers: [] });
+        setScreen({ type: "select", candidates: data.candidates ?? [] });
       }
     } catch {
-      // If question loading fails, skip to summary gracefully
-      setScreen({ type: "summary", process, answers: [], questions: [] });
+      setScreen({ type: "error", message: "Could not identify a process. Please check your connection and try again." });
     }
   }
 
-  function answerQuestion(answer: string) {
-    if (screen.type !== "question") return;
-    const newAnswers = [...screen.answers, answer];
-    if (screen.qIndex + 1 >= screen.questions.length) {
-      setScreen({ type: "summary", process: screen.process, answers: newAnswers, questions: screen.questions });
-    } else {
-      setScreen({ type: "question", process: screen.process, questions: screen.questions, qIndex: screen.qIndex + 1, answers: newAnswers });
+  // ── Plan ──────────────────────────────────────────────────────────────────
+
+  async function buildPlan(
+    candidate: CandidateProcess,
+    desc: string,
+    history: { question: string; answer: string }[]
+  ) {
+    setScreen({ type: "loading", label: "Building your process plan…" });
+    try {
+      const res = await fetch("/api/process-agent/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ candidate, description: desc, answers: history }),
+      });
+      if (!res.ok) throw new Error("API error");
+      const data = await res.json();
+      setScreen({ type: "confirm", plan: data.plan, candidate });
+    } catch {
+      setScreen({ type: "error", message: "Could not generate the process plan. Please try again." });
     }
   }
 
-  function skipQuestion() {
-    if (screen.type !== "question") return;
-    answerQuestion("—");
+  // ── Create ────────────────────────────────────────────────────────────────
+
+  async function createProcess() {
+    if (screen.type !== "confirm") return;
+    const { plan } = screen;
+    setScreen({ type: "creating" });
+    try {
+      const res = await fetch("/api/process-agent/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan, source_type: "ai_generated" }),
+      });
+      if (!res.ok) throw new Error("API error");
+      const data = await res.json();
+      onCreated(data.process);
+      onClose();
+    } catch {
+      setScreen({ type: "error", message: "Could not save the process. Please try again." });
+    }
   }
 
-  function handleCreate() {
-    if (screen.type !== "summary") return;
-    const steps: ProcessStep[] = [
-      {
-        id: "ns-1", order: 1, title: "Gather required documents",
-        description: "Collect all supporting documents required for this process.",
-        status: "in_progress", checklistItems: [],
-      },
-      {
-        id: "ns-2", order: 2, title: "Submit application",
-        description: "Complete and submit the relevant application to Migrationsverket.",
-        status: "not_started", checklistItems: [],
-      },
-      {
-        id: "ns-3", order: 3, title: "Await decision",
-        description: "Migrationsverket will review and decide on your application.",
-        status: "not_started", checklistItems: [],
-      },
-    ];
-
-    const proc: Process = {
-      id: `proc-new-${Date.now()}`,
-      name: screen.process.name,
-      country: "Sweden",
-      currentStageIndex: 0,
-      status: "active",
-      steps,
-      nextAction: "Gather required documents and review the process steps",
-      startedAt: new Date().toISOString().split("T")[0],
-      documentIds: [],
-      notes: description,
-    };
-
-    onCreated(proc);
-    onClose();
-  }
-
-  // ── Back navigation ───────────────────────────────────────────────────────
+  // ── Back ──────────────────────────────────────────────────────────────────
 
   function goBack() {
-    if (screen.type === "loading" || screen.type === "clarify" || screen.type === "select") {
+    if (screen.type === "clarify" || screen.type === "select") {
       setScreen({ type: "describe" });
-    } else if (screen.type === "questions_loading") {
-      setScreen({ type: "select", matches: [] }); // fallback
-    } else if (screen.type === "question") {
-      if (screen.qIndex === 0) {
-        setScreen({ type: "select", matches: [screen.process] });
-      } else {
-        const prevAnswers = screen.answers.slice(0, -1);
-        setScreen({ type: "question", process: screen.process, questions: screen.questions, qIndex: screen.qIndex - 1, answers: prevAnswers });
-      }
-    } else if (screen.type === "summary") {
-      if (screen.questions.length > 0) {
-        const prevAnswers = screen.answers.slice(0, -1);
-        setScreen({ type: "question", process: screen.process, questions: screen.questions, qIndex: screen.questions.length - 1, answers: prevAnswers });
-      } else {
-        setScreen({ type: "select", matches: [screen.process] });
-      }
+    } else if (screen.type === "confirm") {
+      setScreen({ type: "select", candidates: [screen.candidate] });
     }
   }
 
+  const showBack = ["clarify", "select", "confirm"].includes(screen.type);
   const totalSteps = 4;
   const currentStep = screenToStep(screen);
-  const showBack = screen.type !== "describe" && screen.type !== "loading" && screen.type !== "questions_loading";
-
-  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0d1b2e]/50 backdrop-blur-sm p-4">
       <div
-        className="relative w-full max-w-lg rounded-2xl border border-neutral-200 bg-white"
+        className="relative w-full max-w-lg rounded-2xl border border-neutral-200 bg-white max-h-[90vh] overflow-y-auto"
         style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.14)" }}
       >
-        {/* Top bar: progress + close */}
-        <div className="flex items-center justify-between px-8 pt-7 pb-0">
+        {/* Top bar */}
+        <div className="flex items-center justify-between px-8 pt-7 pb-0 sticky top-0 bg-white z-10 border-b border-neutral-50 pb-4">
           <ProgressDots total={totalSteps} current={currentStep} />
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
-            title="Close"
-          >
+          <button onClick={onClose} className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900 transition-colors">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M12 4L4 12M4 4l8 8" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
             </svg>
           </button>
         </div>
 
-        {/* Body */}
         <div className="px-8 py-7">
 
-          {/* ── Step 1: Describe ── */}
+          {/* ── Describe ── */}
           {screen.type === "describe" && (
             <div className="space-y-6">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Sweden — Migrationsverket</p>
-                <h2 className="mt-2 text-2xl font-semibold leading-snug text-neutral-950">
-                  Tell us what you&apos;re trying to do — in your own words.
+                <h2 className="text-2xl font-semibold leading-snug text-neutral-950">
+                  Tell us what you&apos;re trying to do.
                 </h2>
                 <p className="mt-2 text-sm text-neutral-500">
-                  There&apos;s no right way to describe it. Just tell us your situation.
+                  Describe your situation in plain language — where you are, where you&apos;re going, and why.
                 </p>
               </div>
               <textarea
                 className="w-full resize-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3.5 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-navy focus:bg-white focus:outline-none focus:ring-2 focus:ring-navy/10 transition-colors"
                 rows={5}
-                placeholder={`e.g. "I've been offered a job in Stockholm and need to move from outside the EU." or "I want my partner to join me in Sweden."`}
+                placeholder={`e.g. "I'm a Swedish student doing an internship in London for 6 months."\nor "I've been offered a job in Stockholm and I'm moving from Nigeria."`}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 autoFocus
               />
-              <Button
-                className="w-full py-3 text-base"
-                disabled={!description.trim()}
-                onClick={() => identifyProcess(description)}
-              >
+              <Button className="w-full py-3 text-base" disabled={!description.trim()} onClick={() => identify(description)}>
                 Continue
               </Button>
             </div>
           )}
 
           {/* ── Loading ── */}
-          {(screen.type === "loading" || screen.type === "questions_loading") && (
+          {(screen.type === "loading" || screen.type === "creating") && (
             <div className="flex flex-col items-center gap-6 py-8">
               <Loader2 className="h-12 w-12 animate-spin text-navy" strokeWidth={1.25} />
               <div className="text-center">
                 <p className="text-lg font-semibold text-neutral-900">
-                  {screen.type === "loading" ? "Finding the right process…" : "Preparing your questions…"}
+                  {screen.type === "creating" ? "Saving your process…" : screen.label}
                 </p>
                 <p className="mt-1.5 text-sm text-neutral-500">This takes just a moment.</p>
               </div>
             </div>
           )}
 
-          {/* ── Clarification ── */}
+          {/* ── Clarify ── */}
           {screen.type === "clarify" && (
             <div className="space-y-6">
               {showBack && (
                 <button onClick={goBack} className="flex items-center gap-1 text-sm text-neutral-400 hover:text-neutral-700 transition-colors">
-                  <ChevronLeft className="h-4 w-4" />
-                  Back
+                  <ChevronLeft className="h-4 w-4" /> Back
                 </button>
               )}
               <div>
                 <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">One quick question</p>
-                <h2 className="mt-2 text-2xl font-semibold leading-snug text-neutral-950">
-                  {screen.question}
-                </h2>
+                <h2 className="mt-2 text-xl font-semibold leading-snug text-neutral-950">{screen.question}</h2>
               </div>
-              <div className="space-y-2.5">
-                {/* Generic answer options derived from the question — Claude sometimes returns these, otherwise show a text field */}
-                <textarea
-                  className="w-full resize-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-navy focus:bg-white focus:outline-none focus:ring-2 focus:ring-navy/10 transition-colors"
-                  rows={3}
-                  placeholder="Your answer…"
-                  id="clarify-input"
-                  autoFocus
-                />
-              </div>
-              <Button
-                className="w-full py-3 text-base"
-                onClick={() => {
-                  const el = document.getElementById("clarify-input") as HTMLTextAreaElement | null;
-                  const answer = el?.value?.trim() ?? "";
-                  identifyProcess(screen.usedDescription, answer || "no further detail");
-                }}
-              >
-                Continue
-              </Button>
+              {screen.options && screen.options.length > 0 ? (
+                <div className="space-y-2.5">
+                  {screen.options.map((opt) => (
+                    <button
+                      key={opt}
+                      onClick={() => identify(description, opt)}
+                      className="w-full rounded-xl border border-neutral-200 bg-white px-5 py-3.5 text-left text-base font-medium text-neutral-800 transition-all hover:border-navy hover:bg-navy-light/30"
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <textarea
+                    className="w-full resize-none rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-navy focus:bg-white focus:outline-none focus:ring-2 focus:ring-navy/10 transition-colors"
+                    rows={3}
+                    placeholder="Your answer…"
+                    value={clarifyInput}
+                    onChange={(e) => setClarifyInput(e.target.value)}
+                    autoFocus
+                  />
+                  <Button className="w-full py-3" onClick={() => identify(description, clarifyInput || "no further detail")}>
+                    Continue
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
-          {/* ── Process selection ── */}
+          {/* ── Select ── */}
           {screen.type === "select" && (
             <div className="space-y-5">
               {showBack && (
                 <button onClick={goBack} className="flex items-center gap-1 text-sm text-neutral-400 hover:text-neutral-700 transition-colors">
-                  <ChevronLeft className="h-4 w-4" />
-                  Back
+                  <ChevronLeft className="h-4 w-4" /> Back
                 </button>
               )}
               <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Sweden — Migrationsverket</p>
-                <h2 className="mt-2 text-xl font-semibold leading-snug text-neutral-950">
-                  Which of these matches your situation?
-                </h2>
+                <h2 className="text-xl font-semibold leading-snug text-neutral-950">Which matches your situation?</h2>
               </div>
               <div className="space-y-2.5">
-                {screen.matches.map((match) => (
+                {screen.candidates.map((c) => (
                   <button
-                    key={match.id}
-                    onClick={() => loadQuestions(match)}
+                    key={c.id}
+                    onClick={() => buildPlan(c, description, clarifyHistory)}
                     className="w-full rounded-xl border border-neutral-200 bg-white px-5 py-4 text-left transition-all hover:border-navy hover:bg-navy-light/30 hover:shadow-sm active:scale-[0.99]"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-neutral-950">{match.name}</p>
-                        <p className="mt-1 text-sm leading-relaxed text-neutral-600">{match.description}</p>
+                        <p className="text-sm font-semibold text-neutral-950">{c.name}</p>
+                        <p className="mt-1 text-sm leading-relaxed text-neutral-600">{c.description}</p>
+                        {c.destination_country && (
+                          <p className="mt-1 text-[11px] text-neutral-400 flex items-center gap-1">
+                            <MapPin className="h-3 w-3" /> {c.destination_country}
+                            {c.authority_name && ` · ${c.authority_name}`}
+                          </p>
+                        )}
                       </div>
-                      {match.confidence >= 0.8 && (
+                      {c.confidence >= 0.8 && (
                         <span className="mt-0.5 shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
                           Best match
                         </span>
@@ -437,159 +571,94 @@ function AddProcessModal({
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-neutral-400">
-                Not sure? Pick the one that sounds closest — you can adjust it later.
-              </p>
+              <p className="text-xs text-neutral-400">Not sure? Pick the closest — you can adjust it later.</p>
             </div>
           )}
 
-          {/* ── Follow-up questions ── */}
-          {screen.type === "question" && (
-            <div className="space-y-6">
-              {showBack && (
-                <button onClick={goBack} className="flex items-center gap-1 text-sm text-neutral-400 hover:text-neutral-700 transition-colors">
-                  <ChevronLeft className="h-4 w-4" />
-                  Back
-                </button>
-              )}
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">
-                  {screen.process.name} · Question {screen.qIndex + 1} of {screen.questions.length}
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold leading-snug text-neutral-950">
-                  {screen.questions[screen.qIndex].question}
-                </h2>
-              </div>
-
-              {screen.questions[screen.qIndex].type === "choice" && screen.questions[screen.qIndex].options && (
-                <div className="space-y-2.5">
-                  {screen.questions[screen.qIndex].options!.map((opt) => (
-                    <button
-                      key={opt}
-                      onClick={() => answerQuestion(opt)}
-                      className="w-full rounded-xl border border-neutral-200 bg-white px-5 py-3.5 text-left text-base font-medium text-neutral-800 transition-all hover:border-navy hover:bg-navy-light/30"
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                  <button onClick={skipQuestion} className="text-sm text-neutral-400 hover:text-neutral-600 mt-1">
-                    Skip this question
-                  </button>
-                </div>
-              )}
-
-              {screen.questions[screen.qIndex].type === "date" && (
-                <div className="space-y-4">
-                  <input
-                    type="date"
-                    id="q-date"
-                    className="w-full rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-base text-neutral-900 focus:border-navy focus:bg-white focus:outline-none focus:ring-2 focus:ring-navy/10 transition-colors"
-                    autoFocus
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      className="flex-1 py-3"
-                      onClick={() => {
-                        const el = document.getElementById("q-date") as HTMLInputElement | null;
-                        answerQuestion(el?.value || "—");
-                      }}
-                    >
-                      Continue
-                    </Button>
-                    <Button variant="secondary" onClick={skipQuestion}>Skip</Button>
-                  </div>
-                </div>
-              )}
-
-              {screen.questions[screen.qIndex].type === "text" && (
-                <div className="space-y-4">
-                  <input
-                    type="text"
-                    id="q-text"
-                    className="w-full rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3.5 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-navy focus:bg-white focus:outline-none focus:ring-2 focus:ring-navy/10 transition-colors"
-                    placeholder="Your answer…"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        const el = e.currentTarget;
-                        answerQuestion(el.value || "—");
-                      }
-                    }}
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      className="flex-1 py-3"
-                      onClick={() => {
-                        const el = document.getElementById("q-text") as HTMLInputElement | null;
-                        answerQuestion(el?.value || "—");
-                      }}
-                    >
-                      Continue
-                    </Button>
-                    <Button variant="secondary" onClick={skipQuestion}>Skip</Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Summary ── */}
-          {screen.type === "summary" && (
+          {/* ── Confirm ── */}
+          {screen.type === "confirm" && (
             <div className="space-y-5">
               {showBack && (
                 <button onClick={goBack} className="flex items-center gap-1 text-sm text-neutral-400 hover:text-neutral-700 transition-colors">
-                  <ChevronLeft className="h-4 w-4" />
-                  Back
+                  <ChevronLeft className="h-4 w-4" /> Back
                 </button>
               )}
               <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Summary</p>
-                <h2 className="mt-1.5 text-xl font-semibold text-neutral-950">{screen.process.name}</h2>
-                <p className="mt-1.5 text-sm leading-relaxed text-neutral-600">{screen.process.description}</p>
+                <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Your process plan</p>
+                <h2 className="mt-1.5 text-xl font-semibold text-neutral-950">{screen.plan.title}</h2>
+                <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-neutral-500">
+                  {screen.plan.destination_country && (
+                    <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{screen.plan.destination_country}</span>
+                  )}
+                  <span className="flex items-center gap-1"><Globe className="h-3 w-3" />{screen.plan.authority_name}</span>
+                </div>
               </div>
 
-              {/* Answers given */}
-              {screen.questions.length > 0 && screen.answers.some((a) => a !== "—") && (
-                <div className="rounded-xl border border-neutral-100 bg-neutral-50 px-4 py-3 space-y-2">
-                  {screen.questions.map((q, i) => (
-                    screen.answers[i] && screen.answers[i] !== "—" ? (
-                      <div key={i}>
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">{q.question}</p>
-                        <p className="mt-0.5 text-sm text-neutral-800">{screen.answers[i]}</p>
+              <p className="text-sm leading-relaxed text-neutral-700">{screen.plan.summary}</p>
+
+              <div className="rounded-xl border border-neutral-100 bg-neutral-50 px-4 py-3 space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Why this applies to you</p>
+                <p className="text-sm text-neutral-700">{screen.plan.rationale}</p>
+              </div>
+
+              <div className="rounded-xl border border-neutral-100 bg-neutral-50 px-4 py-3 space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Timeline</p>
+                <p className="text-sm text-neutral-700">{screen.plan.timeline_summary}</p>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-2">
+                  Steps ({screen.plan.steps.length})
+                </p>
+                <div className="space-y-1.5">
+                  {screen.plan.steps.map((step, i) => (
+                    <div key={i} className="flex items-start gap-3 rounded-lg border border-neutral-100 px-3 py-2.5">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[10px] font-bold text-neutral-500">
+                        {i + 1}
+                      </span>
+                      <div>
+                        <p className="text-xs font-semibold text-neutral-900">{step.title}</p>
+                        {step.estimated_duration && (
+                          <p className="text-[10px] text-neutral-400">~{step.estimated_duration}</p>
+                        )}
                       </div>
-                    ) : null
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {screen.plan.uncertainty_notes && screen.plan.uncertainty_notes !== "None" && (
+                <div className="flex items-start gap-2.5 rounded-xl border border-warning/20 bg-warning/5 px-4 py-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" strokeWidth={1.75} />
+                  <p className="text-sm leading-relaxed text-neutral-700">{screen.plan.uncertainty_notes}</p>
+                </div>
+              )}
+
+              <div className="flex items-start gap-2.5 rounded-xl border-l-[3px] border-navy-light bg-navy-light/40 px-4 py-3">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-navy" strokeWidth={1.75} />
+                <p className="text-sm leading-relaxed text-neutral-700">
+                  This is a plain-language overview based on publicly available information. It is not legal advice and may not reflect recent changes. Always verify requirements with the relevant authority.
+                </p>
+              </div>
+
+              {screen.plan.official_sources && screen.plan.official_sources.length > 0 && (
+                <div className="space-y-1">
+                  {screen.plan.official_sources.map((src, i) => (
+                    <a
+                      key={i}
+                      href={src.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 text-xs text-navy hover:underline"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} />
+                      {src.title}
+                    </a>
                   ))}
                 </div>
               )}
 
-              {/* Plain-language note */}
-              <div className="flex items-start gap-2.5 rounded-xl border-l-[3px] border-navy-light bg-navy-light/40 px-4 py-3">
-                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-navy" strokeWidth={1.75} />
-                <p className="text-sm leading-relaxed text-neutral-700">
-                  This is a plain-language overview based on commonly published information. It is not legal advice and may not reflect recent changes. Requirements vary by individual case.
-                </p>
-              </div>
-
-              {/* Referral card */}
-              <div className="rounded-xl border border-info/20 bg-info/5 p-4">
-                <div className="flex items-start gap-3">
-                  <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-info" strokeWidth={1.75} />
-                  <div>
-                    <p className="text-sm font-semibold text-neutral-900">For legal questions about your case</p>
-                    <p className="mt-1 text-sm leading-relaxed text-neutral-600">
-                      Contact Migrationsverket directly at{" "}
-                      <span className="font-medium text-neutral-800">migrationsverket.se</span>{" "}
-                      or call{" "}
-                      <span className="font-medium text-neutral-800">0771-235 235</span>.
-                    </p>
-                    <p className="mt-1.5 text-xs text-neutral-400">
-                      migraDOCS provides document organisation and information only — not legal advice.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <Button className="w-full py-3 text-base" onClick={handleCreate}>
+              <Button className="w-full py-3 text-base" onClick={createProcess}>
                 Add to my processes
               </Button>
             </div>
@@ -605,9 +674,7 @@ function AddProcessModal({
                 <p className="text-base font-semibold text-neutral-900">Something went wrong</p>
                 <p className="mt-1.5 text-sm leading-relaxed text-neutral-500 max-w-xs">{screen.message}</p>
               </div>
-              <Button variant="secondary" onClick={() => setScreen({ type: "describe" })}>
-                Start over
-              </Button>
+              <Button variant="secondary" onClick={() => setScreen({ type: "describe" })}>Start over</Button>
             </div>
           )}
         </div>
@@ -616,26 +683,69 @@ function AddProcessModal({
   );
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────
+// ── Main component ─────────────────────────────────────────────────────────
 
 export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () => void }) {
   const [showModal, setShowModal] = useState(false);
-  const [localProcesses, setLocalProcesses] = useState<Process[]>([]);
+  const [processes, setProcesses] = useState<ProcessRowWithSteps[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const allProcesses = [...DEMO_PROCESSES, ...localProcesses];
+  const fetchProcesses = useCallback(async () => {
+    try {
+      const res = await fetch("/api/processes");
+      if (!res.ok) throw new Error("Failed to load");
+      const data = await res.json();
+      setProcesses(data.processes ?? []);
+    } catch {
+      setError("Could not load your processes.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const handleCreated = (p: Process) => {
-    setLocalProcesses((prev) => [p, ...prev]);
-    // After creation, switch to overview
+  useEffect(() => { fetchProcesses(); }, [fetchProcesses]);
+
+  const handleCreated = (p: ProcessRowWithSteps) => {
+    setProcesses((prev) => [p, ...prev]);
     onSwitchToOverview?.();
   };
+
+  const handleChecklistToggle = async (processId: string, itemId: string, completed: boolean) => {
+    // Optimistic update
+    setProcesses((prev) =>
+      prev.map((p) =>
+        p.id !== processId ? p : {
+          ...p,
+          steps: p.steps.map((s) => ({
+            ...s,
+            checklist_items: s.checklist_items.map((i) =>
+              i.id === itemId ? { ...i, completed } : i
+            ),
+          })),
+        }
+      )
+    );
+
+    try {
+      await fetch(`/api/processes/${processId}/checklist/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ completed }),
+      });
+    } catch {
+      // Revert on failure
+      fetchProcesses();
+    }
+  };
+
+  const activeCount = processes.filter((p) => p.status === "active").length;
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <p className="text-xs text-neutral-500">
-          {allProcesses.filter((p) => p.status === "active").length} active{" "}
-          · {allProcesses.length} total · Sweden (Migrationsverket)
+          {loading ? "Loading…" : `${activeCount} active · ${processes.length} total`}
         </p>
         <Button onClick={() => setShowModal(true)}>
           <Plus className="h-4 w-4" />
@@ -643,17 +753,33 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
         </Button>
       </div>
 
-      {allProcesses.length === 0 ? (
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-neutral-300" strokeWidth={1.5} />
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="rounded-xl border border-warning/20 bg-warning/5 px-4 py-3 text-sm text-neutral-700">
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && processes.length === 0 && (
         <div className="rounded-xl border border-dashed border-neutral-200 py-20 text-center">
           <p className="text-base font-medium text-neutral-600">No processes yet</p>
-          <p className="mt-1 text-sm text-neutral-400">
-            Click &quot;Add new process&quot; to get started.
-          </p>
+          <p className="mt-1 text-sm text-neutral-400">Click &quot;Add new process&quot; to get started.</p>
         </div>
-      ) : (
+      )}
+
+      {!loading && processes.length > 0 && (
         <div className="space-y-3">
-          {allProcesses.map((proc) => (
-            <ProcessCard key={proc.id} process={proc} />
+          {processes.map((proc) => (
+            <ProcessCard
+              key={proc.id}
+              process={proc}
+              onChecklistToggle={handleChecklistToggle}
+            />
           ))}
         </div>
       )}
@@ -661,7 +787,7 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
       <div className="flex items-start gap-2.5 rounded-lg border border-neutral-100 bg-neutral-50 px-4 py-3">
         <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-400" strokeWidth={1.75} />
         <p className="text-[11px] leading-relaxed text-neutral-500">
-          Process information is based on publicly available Migrationsverket guidance and may not reflect recent policy changes. Always verify requirements directly with Migrationsverket.
+          Process information is based on publicly available guidance and may not reflect recent changes. Always verify requirements directly with the relevant authority.
         </p>
       </div>
 
