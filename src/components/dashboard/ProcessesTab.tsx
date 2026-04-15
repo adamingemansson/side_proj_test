@@ -614,8 +614,7 @@ function AddProcessModal({
     // Demo mode: build the process locally, no API call
     if (demoMode) {
       const localProcess = buildDemoProcess(candidate);
-      onCreated(localProcess);
-      onClose();
+      onCreated(localProcess); // handleCreated closes the modal
       return;
     }
 
@@ -633,8 +632,7 @@ function AddProcessModal({
         setScreen({ type: "error", message: msg + details });
         return;
       }
-      onCreated(data.process);
-      onClose();
+      onCreated(data.process); // handleCreated closes the modal
     } catch (err) {
       setScreen({ type: "error", message: "Could not save the process. Please check your connection and try again." });
       console.error("[createProcess]", err);
@@ -915,6 +913,8 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
   const [error, setError] = useState<string | null>(null);
 
   const fetchProcesses = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     if (demoMode) { setLoading(false); return; }
     try {
       const res = await fetch("/api/processes");
@@ -930,10 +930,34 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
 
   useEffect(() => { fetchProcesses(); }, [fetchProcesses]);
 
-  const handleCreated = (p: ProcessRowWithSteps) => {
+  function toggleDemoMode() {
+    setDemoMode((prev) => {
+      const next = !prev;
+      // Clear any existing error when enabling demo mode
+      if (next) { setError(null); setLoading(false); }
+      return next;
+    });
+  }
+
+  const handleCreated = useCallback(async (p: ProcessRowWithSteps) => {
+    // Optimistically add to the list immediately so the user sees it right away
     setProcesses((prev) => [p, ...prev]);
-    onSwitchToOverview?.();
-  };
+    setShowModal(false);
+
+    if (!demoMode) {
+      // Re-fetch from server in the background to get authoritative data
+      // (steps might have been enriched server-side)
+      try {
+        const res = await fetch("/api/processes");
+        if (res.ok) {
+          const data = await res.json();
+          setProcesses(data.processes ?? []);
+        }
+      } catch {
+        // Optimistic update is already in place — not critical
+      }
+    }
+  }, [demoMode]);
 
   const handleChecklistToggle = async (processId: string, itemId: string, completed: boolean) => {
     // Optimistic update
@@ -973,7 +997,7 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
             {loading ? "Loading…" : `${activeCount} active · ${processes.length} total`}
           </p>
           <button
-            onClick={() => setDemoMode((d) => !d)}
+            onClick={toggleDemoMode}
             className={`rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${
               demoMode
                 ? "border-navy bg-navy text-white"
@@ -1034,6 +1058,7 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
           demoMode={demoMode}
         />
       )}
+
     </div>
   );
 }
