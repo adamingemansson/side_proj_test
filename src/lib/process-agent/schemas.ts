@@ -26,9 +26,15 @@ export type IdentifyResponse = z.infer<typeof IdentifyResponseSchema>;
 
 // ── Plan step ──────────────────────────────────────────────────────────────
 
+const ITEM_TYPES = ["document", "action", "appointment", "payment", "other"] as const;
+
 export const PlanChecklistItemSchema = z.object({
   label: z.string(),
-  item_type: z.enum(["document", "action", "appointment", "payment", "other"]),
+  // Coerce unexpected values (e.g. "form", "documentation") to "other"
+  item_type: z
+    .string()
+    .transform((v) => (ITEM_TYPES.includes(v as typeof ITEM_TYPES[number]) ? v : "other"))
+    .pipe(z.enum(ITEM_TYPES)),
   due_date: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
 });

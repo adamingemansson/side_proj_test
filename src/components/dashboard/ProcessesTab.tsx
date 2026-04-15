@@ -156,9 +156,10 @@ function ProcessCard({ process, onChecklistToggle }: {
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  const totalSteps = process.steps.length;
-  const completedSteps = process.steps.filter((s) => s.status === "completed").length;
-  const currentStep = process.steps.find((s) => s.status === "in_progress");
+  const steps = process.steps ?? [];
+  const totalSteps = steps.length;
+  const completedSteps = steps.filter((s) => s.status === "completed").length;
+  const currentStep = steps.find((s) => s.status === "in_progress");
   const deadlineDays = process.next_deadline ? daysFromNow(process.next_deadline) : null;
 
   const statusVariant: Record<string, "success" | "info" | "muted" | "urgent"> = {
@@ -268,7 +269,7 @@ function ProcessCard({ process, onChecklistToggle }: {
 
         {expanded && (
           <div className="mt-3 space-y-2">
-            {process.steps.map((step) => (
+            {steps.map((step) => (
               <ProcessStepRow
                 key={step.id}
                 step={step}
@@ -412,12 +413,18 @@ function AddProcessModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan, source_type: "ai_generated" }),
       });
-      if (!res.ok) throw new Error("API error");
       const data = await res.json();
+      if (!res.ok) {
+        const msg = data?.error ?? "Could not save the process.";
+        const details = data?.details ? ` (${JSON.stringify(data.details)})` : "";
+        setScreen({ type: "error", message: msg + details });
+        return;
+      }
       onCreated(data.process);
       onClose();
-    } catch {
-      setScreen({ type: "error", message: "Could not save the process. Please try again." });
+    } catch (err) {
+      setScreen({ type: "error", message: "Could not save the process. Please check your connection and try again." });
+      console.error("[createProcess]", err);
     }
   }
 

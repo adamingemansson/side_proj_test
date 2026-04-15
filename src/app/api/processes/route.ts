@@ -21,7 +21,7 @@ export async function GET() {
       `)
       .eq("user_id", session.user.id)
       .order("created_at", { ascending: false })
-      .order("order_index", { referencedTable: "process_steps", ascending: true });
+      .order("order_index", { foreignTable: "process_steps", ascending: true });
 
     if (error) throw error;
 

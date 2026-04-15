@@ -105,12 +105,13 @@ export async function POST(req: NextRequest) {
         )
       `)
       .eq("id", processRow.id)
-      .order("order_index", { referencedTable: "process_steps", ascending: true })
+      .order("order_index", { foreignTable: "process_steps", ascending: true })
       .single();
 
     if (fetchError || !fullProcess) {
-      // Process was created — return just the header row
-      return NextResponse.json({ process: processRow });
+      console.error("[create] final fetch failed:", fetchError);
+      // Process was created — return with empty steps so the client doesn't crash
+      return NextResponse.json({ process: { ...processRow, steps: [] } });
     }
 
     return NextResponse.json({ process: fullProcess });
