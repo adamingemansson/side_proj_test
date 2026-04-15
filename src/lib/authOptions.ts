@@ -1,5 +1,6 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import CredentialsProvider from "next-auth/providers/credentials";
 import { supabase } from "./db";
 
 // ── Silent token refresh ───────────────────────────────────────────────────
@@ -55,6 +56,14 @@ export const authOptions: NextAuthOptions = {
         },
       },
     }),
+    CredentialsProvider({
+      id: "demo",
+      name: "Demo",
+      credentials: {},
+      async authorize() {
+        return { id: "demo", name: "Demo User", email: "demo@migradocs.app" };
+      },
+    }),
   ],
 
   session: { strategy: "jwt" },
@@ -66,6 +75,11 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, account, user }) {
       // ① Initial sign-in: account + user are present
       if (account && user) {
+        // Demo credentials — no Supabase upsert, no Drive tokens
+        if (account.provider === "credentials") {
+          return { ...token, userId: "demo" };
+        }
+
         // Upsert user record (ignore if already exists to preserve drive_folder_id)
         await supabase.from("users").upsert(
           {

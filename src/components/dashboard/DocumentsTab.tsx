@@ -22,10 +22,10 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DEMO_DOCUMENTS } from "@/lib/data/documents";
-import { DEMO_PROCESSES } from "@/lib/data/processes";
+import { useDocuments } from "@/hooks/useDocuments";
+import { useProcesses } from "@/hooks/useProcesses";
 import { categoryLabel, formatDateShort, statusLabel } from "@/lib/utils";
-import type { Document, DocumentCategory, DocumentStatus } from "@/types";
+import type { Document, DocumentCategory, DocumentStatus, Process } from "@/types";
 
 // Demo today
 const TODAY = new Date("2026-04-12");
@@ -96,7 +96,7 @@ function DeleteConfirm({
 
 // ── Structured summary panel ───────────────────────────────────────────────
 
-function StructuredSummary({ doc }: { doc: Document }) {
+function StructuredSummary({ doc, processes }: { doc: Document; processes: Process[] }) {
   const [checklist, setChecklist] = useState(doc.preparationChecklist);
 
   const toggleCheck = (id: string) =>
@@ -104,7 +104,7 @@ function StructuredSummary({ doc }: { doc: Document }) {
       prev.map((item) => (item.id === id ? { ...item, completed: !item.completed } : item))
     );
 
-  const linkedProcesses = DEMO_PROCESSES.filter(
+  const linkedProcesses = processes.filter(
     (p) => doc.processIds?.includes(p.id) || p.documentIds.includes(doc.id)
   );
 
@@ -342,11 +342,13 @@ function DocumentRow({
   expanded,
   onToggle,
   onDelete,
+  processes,
 }: {
   doc: Document;
   expanded: boolean;
   onToggle: () => void;
   onDelete: () => void;
+  processes: Process[];
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -355,7 +357,7 @@ function DocumentRow({
   const expired = doc.expiryDate && isExpired(doc.expiryDate);
   const expiryDays = doc.expiryDate ? daysFromNow(doc.expiryDate) : null;
 
-  const linkedProcesses = DEMO_PROCESSES.filter(
+  const linkedProcesses = processes.filter(
     (p) => doc.processIds?.includes(p.id) || p.documentIds.includes(doc.id)
   );
 
@@ -503,7 +505,7 @@ function DocumentRow({
       {/* Expanded summary */}
       {expanded && (
         <div className="border-t border-neutral-100 px-4 pb-5 pt-4">
-          <StructuredSummary doc={doc} />
+          <StructuredSummary doc={doc} processes={processes} />
         </div>
       )}
     </div>
@@ -527,10 +529,12 @@ function GroupHeader({ label, count }: { label: string; count: number }) {
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export function DocumentsTab() {
+  const { documents } = useDocuments();
+  const { processes } = useProcesses();
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const visibleDocs = DEMO_DOCUMENTS.filter((d) => !deletedIds.has(d.id));
+  const visibleDocs = documents.filter((d) => !deletedIds.has(d.id));
 
   const handleDelete = (id: string) => {
     setDeletedIds((prev) => new Set([...prev, id]));
@@ -623,6 +627,7 @@ export function DocumentsTab() {
                     expanded={expandedId === doc.id}
                     onToggle={() => toggleExpand(doc.id)}
                     onDelete={() => handleDelete(doc.id)}
+                    processes={processes}
                   />
                 ))}
               </div>

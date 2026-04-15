@@ -38,7 +38,7 @@ export function mapProcessRow(row: ProcessRowWithSteps): Process {
 }
 
 export function useProcesses() {
-  const [raw, setRaw] = useState<ProcessRowWithSteps[]>([]);
+  const [processes, setProcesses] = useState<Process[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,16 +46,20 @@ export function useProcesses() {
     let cancelled = false;
     fetch("/api/processes")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((data) => { if (!cancelled) setRaw(data.processes ?? []); })
+      .then((data) => {
+        if (!cancelled) {
+          // isDemo: true means the API already returned Process[] directly
+          if (data.isDemo) {
+            setProcesses(data.processes ?? []);
+          } else {
+            setProcesses((data.processes ?? []).map(mapProcessRow));
+          }
+        }
+      })
       .catch(() => { if (!cancelled) setError("Could not load processes."); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
-  return {
-    raw,
-    processes: raw.map(mapProcessRow),
-    loading,
-    error,
-  };
+  return { processes, loading, error };
 }

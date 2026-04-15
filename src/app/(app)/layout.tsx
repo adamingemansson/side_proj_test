@@ -17,8 +17,10 @@ export default async function AppLayout({
     redirect("/login");
   }
 
-  // Ensure Drive folder exists for this user (fast no-op if already set up)
-  await ensureUserSetup(session);
+  // Ensure Drive folder exists for this user (skip for demo — no Drive access)
+  if (session.user?.id !== "demo") {
+    await ensureUserSetup(session);
+  }
 
   return (
     <SessionProvider session={session}>

@@ -23,12 +23,19 @@ function LoginCard() {
   const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard";
   const errorParam = searchParams.get("error");
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
 
   const handleSignIn = async () => {
     setLoading(true);
     await signIn("google", { callbackUrl });
     // signIn redirects, so setLoading(false) won't run on success
     setLoading(false);
+  };
+
+  const handleDemoSignIn = async () => {
+    setDemoLoading(true);
+    await signIn("demo", { callbackUrl: "/dashboard" });
+    setDemoLoading(false);
   };
 
   return (
@@ -58,6 +65,25 @@ function LoginCard() {
           <GoogleIcon />
         )}
         {loading ? "Redirecting to Google…" : "Sign in with Google"}
+      </Button>
+
+      <div className="relative my-5 flex items-center">
+        <div className="flex-1 border-t border-neutral-200" />
+        <span className="px-3 text-[10px] text-neutral-400">or</span>
+        <div className="flex-1 border-t border-neutral-200" />
+      </div>
+
+      <Button
+        onClick={handleDemoSignIn}
+        disabled={demoLoading || loading}
+        variant="outline"
+        className="w-full border-neutral-200 text-neutral-600 hover:bg-neutral-50"
+        size="lg"
+      >
+        {demoLoading ? (
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-200 border-t-neutral-600" />
+        ) : null}
+        {demoLoading ? "Loading demo…" : "Try demo (no sign-in needed)"}
       </Button>
 
       <div className="mt-5 rounded-r border-l-2 border-navy-light bg-navy-light/40 pl-3 pr-3 py-2">
