@@ -8,30 +8,28 @@ import { signOut, useSession } from "next-auth/react";
 import { OverviewTab } from "@/components/dashboard/OverviewTab";
 import { ProcessesTab } from "@/components/dashboard/ProcessesTab";
 import { DocumentsTab } from "@/components/dashboard/DocumentsTab";
-import { TimelinesTab } from "@/components/dashboard/TimelinesTab";
 import { ChecklistsTab } from "@/components/dashboard/ChecklistsTab";
 import { AnalyseDocumentTab } from "@/components/dashboard/AnalyseDocumentTab";
 import { DemoModePanel } from "@/components/dashboard/DemoModePanel";
+import { ProcessesProvider } from "@/contexts/ProcessesContext";
 
 type DashboardTab =
   | "overview"
   | "processes"
   | "documents"
   | "analyse"
-  | "timelines"
   | "checklists"
   | "inbox"
   | "support";
 
 const TABS: { id: DashboardTab; label: string }[] = [
-  { id: "overview",   label: "Overview"          },
-  { id: "processes",  label: "Processes"         },
-  { id: "documents",  label: "Documents"         },
-  { id: "analyse",    label: "Analyse Document"  },
-  { id: "timelines",  label: "Timelines"         },
-  { id: "checklists", label: "Checklists"        },
-  { id: "inbox",      label: "Inbox"             },
-  { id: "support",    label: "Support"           },
+  { id: "overview",   label: "Overview"         },
+  { id: "processes",  label: "Processes"        },
+  { id: "documents",  label: "Documents"        },
+  { id: "analyse",    label: "Analyse Document" },
+  { id: "checklists", label: "Checklists"       },
+  { id: "inbox",      label: "Inbox"            },
+  { id: "support",    label: "Support"          },
 ];
 
 function DashboardShell() {
@@ -119,7 +117,7 @@ function DashboardShell() {
           <OverviewTab
             firstName={firstName}
             onSwitchToProcesses={() => setTab("processes")}
-            onSwitchToTimelines={() => setTab("timelines")}
+            onSwitchToChecklists={() => setTab("checklists")}
           />
         )}
 
@@ -129,10 +127,6 @@ function DashboardShell() {
 
         {activeTab === "documents" && (
           <DocumentsTab />
-        )}
-
-        {activeTab === "timelines" && (
-          <TimelinesTab />
         )}
 
         {activeTab === "checklists" && (
@@ -147,7 +141,6 @@ function DashboardShell() {
           activeTab !== "processes" &&
           activeTab !== "documents" &&
           activeTab !== "analyse" &&
-          activeTab !== "timelines" &&
           activeTab !== "checklists" && (
           <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-neutral-200 bg-neutral-50">
             <p className="text-sm text-neutral-400 capitalize">
@@ -173,7 +166,9 @@ function DashboardShell() {
 export default function DashboardPage() {
   return (
     <Suspense>
-      <DashboardShell />
+      <ProcessesProvider>
+        <DashboardShell />
+      </ProcessesProvider>
     </Suspense>
   );
 }

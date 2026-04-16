@@ -34,6 +34,56 @@ export async function createDriveFolder(
   return data.id as string;
 }
 
+// ── Folder helpers ─────────────────────────────────────────────────────────
+
+/** Searches for a folder by name inside `parentId`. Returns its ID or null. */
+export async function findChildFolder(
+  accessToken: string,
+  parentId: string,
+  name: string
+): Promise<string | null> {
+  const q = encodeURIComponent(
+    `name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
+  );
+  const res = await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id)`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return (data.files as { id: string }[])?.[0]?.id ?? null;
+}
+
+/** Ensures a folder named `name` exists inside `parentId`. Returns its ID. */
+export async function ensureChildFolder(
+  accessToken: string,
+  parentId: string,
+  name: string
+): Promise<string> {
+  const existing = await findChildFolder(accessToken, parentId, name);
+  if (existing) return existing;
+
+  const res = await fetch(`${DRIVE_API}/files`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(`Drive folder creation failed (${res.status}): ${JSON.stringify(body)}`);
+  }
+
+  const data = await res.json();
+  return data.id as string;
+}
+
 // ── Upload ─────────────────────────────────────────────────────────────────
 
 /** Uploads a file to the user's migraDOCS Drive folder using multipart upload.

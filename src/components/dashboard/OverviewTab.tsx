@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CalendarClock, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useProcesses } from "@/hooks/useProcesses";
+import { useProcessesContext } from "@/contexts/ProcessesContext";
 import { formatDateShort } from "@/lib/utils";
 import type { Process } from "@/types";
 
@@ -45,10 +45,17 @@ function CircleProgress({
   process: Process;
   onTap: () => void;
 }) {
-  const completedCount = process.steps.filter((s) => s.status === "completed").length;
-  const progress = process.steps.length > 0
-    ? Math.round((completedCount / process.steps.length) * 100)
+  const allItems = process.steps.flatMap((s) => s.checklistItems ?? []);
+  const completedItems = allItems.filter((i) => i.completed).length;
+  const progress = allItems.length > 0
+    ? Math.round((completedItems / allItems.length) * 100)
+    : process.steps.length > 0
+    ? Math.round((process.steps.filter((s) => s.status === "completed").length / process.steps.length) * 100)
     : 0;
+
+  // Short hint text: current in-progress step title or nextAction
+  const currentStep = process.steps.find((s) => s.status === "in_progress");
+  const hint = (currentStep?.title ?? process.nextAction ?? "").slice(0, 38) || null;
 
   const leftX = ARC_CX - ARC_R;
   const leftY = ARC_CY;
@@ -127,6 +134,11 @@ function CircleProgress({
           {progress}%
         </text>
       </svg>
+      {hint && (
+        <p className="mt-0.5 max-w-[130px] truncate text-center text-[9px] leading-tight text-neutral-400">
+          {hint}
+        </p>
+      )}
     </button>
   );
 }
@@ -254,14 +266,14 @@ function buildUpcomingItems(processes: Process[]): UpcomingItem[] {
 export function OverviewTab({
   firstName,
   onSwitchToProcesses,
-  onSwitchToTimelines,
+  onSwitchToChecklists,
 }: {
   firstName: string;
   onSwitchToProcesses: () => void;
-  onSwitchToTimelines: () => void;
+  onSwitchToChecklists: () => void;
 }) {
   const [activeProcess, setActiveProcess] = useState<Process | null>(null);
-  const { processes } = useProcesses();
+  const { processes } = useProcessesContext();
 
   const activeProcesses = processes.filter((p) => p.status === "active");
   const upcomingItems = buildUpcomingItems(processes);
@@ -311,10 +323,10 @@ export function OverviewTab({
               Upcoming
             </p>
             <button
-              onClick={onSwitchToTimelines}
+              onClick={onSwitchToChecklists}
               className="text-xs font-medium text-navy hover:underline"
             >
-              See all
+              View checklists
             </button>
           </div>
           <div className="space-y-2">

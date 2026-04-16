@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatDateShort } from "@/lib/utils";
 import type { CandidateProcess, FullPlan } from "@/lib/process-agent/schemas";
 import type { ProcessRowWithSteps, ProcessStepRow, ProcessChecklistItemRow } from "@/lib/db";
+import { getSuggestedProcesses } from "@/lib/process-suggestions";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -55,32 +56,22 @@ const stepStatusIcon = (status: string) => {
   return <Circle className="h-4 w-4 text-neutral-300" strokeWidth={1.75} />;
 };
 
-// ── Checklist item ─────────────────────────────────────────────────────────
+// ── Checklist item (read-only — toggling is done in the Checklists tab) ────
 
-function ChecklistItem({
-  item,
-  processId,
-  onToggle,
-}: {
-  item: ProcessChecklistItemRow;
-  processId: string;
-  onToggle: (itemId: string, completed: boolean) => void;
-}) {
+function ChecklistItem({ item }: { item: ProcessChecklistItemRow }) {
   return (
-    <label className="flex items-start gap-2.5 cursor-pointer group">
-      <input
-        type="checkbox"
-        checked={item.completed}
-        onChange={(e) => onToggle(item.id, e.target.checked)}
-        className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-neutral-300 accent-navy"
-      />
+    <div className="flex items-start gap-2.5">
+      {item.completed
+        ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" strokeWidth={1.75} />
+        : <Circle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-200" strokeWidth={1.75} />
+      }
       <span className={`text-xs leading-relaxed ${item.completed ? "text-neutral-400 line-through" : "text-neutral-700"}`}>
         {item.label}
         {item.notes && (
-          <span className="ml-1 text-neutral-400 not-italic">— {item.notes}</span>
+          <span className="ml-1 text-neutral-400">— {item.notes}</span>
         )}
       </span>
-    </label>
+    </div>
   );
 }
 
@@ -88,12 +79,8 @@ function ChecklistItem({
 
 function ProcessStepRow({
   step,
-  processId,
-  onToggleItem,
 }: {
   step: ProcessStepRow & { checklist_items: ProcessChecklistItemRow[] };
-  processId: string;
-  onToggleItem: (itemId: string, completed: boolean) => void;
 }) {
   const [open, setOpen] = useState(step.status === "in_progress");
   const completedItems = step.checklist_items.filter((i) => i.completed).length;
@@ -133,12 +120,7 @@ function ProcessStepRow({
           {step.checklist_items.length > 0 && (
             <div className="space-y-2">
               {step.checklist_items.map((item) => (
-                <ChecklistItem
-                  key={item.id}
-                  item={item}
-                  processId={processId}
-                  onToggle={onToggleItem}
-                />
+                <ChecklistItem key={item.id} item={item} />
               ))}
             </div>
           )}
@@ -150,10 +132,7 @@ function ProcessStepRow({
 
 // ── Process card ───────────────────────────────────────────────────────────
 
-function ProcessCard({ process, onChecklistToggle }: {
-  process: ProcessRowWithSteps;
-  onChecklistToggle: (processId: string, itemId: string, completed: boolean) => void;
-}) {
+function ProcessCard({ process }: { process: ProcessRowWithSteps }) {
   const [expanded, setExpanded] = useState(false);
 
   const steps = process.steps ?? [];
@@ -273,10 +252,6 @@ function ProcessCard({ process, onChecklistToggle }: {
               <ProcessStepRow
                 key={step.id}
                 step={step}
-                processId={process.id}
-                onToggleItem={(itemId, completed) =>
-                  onChecklistToggle(process.id, itemId, completed)
-                }
               />
             ))}
 
@@ -731,35 +706,15 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
     }
   }, []);
 
-  const handleChecklistToggle = async (processId: string, itemId: string, completed: boolean) => {
-    // Optimistic update
-    setProcesses((prev) =>
-      prev.map((p) =>
-        p.id !== processId ? p : {
-          ...p,
-          steps: p.steps.map((s) => ({
-            ...s,
-            checklist_items: s.checklist_items.map((i) =>
-              i.id === itemId ? { ...i, completed } : i
-            ),
-          })),
-        }
-      )
-    );
-
-    try {
-      await fetch(`/api/processes/${processId}/checklist/${itemId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ completed }),
-      });
-    } catch {
-      // Revert on failure
-      fetchProcesses();
-    }
-  };
-
   const activeCount = processes.filter((p) => p.status === "active").length;
+
+  const suggestions = getSuggestedProcesses(
+    processes.map((p) => ({
+      title: p.title,
+      country: p.country,
+      destination_country: p.destination_country,
+    }))
+  );
 
   return (
     <div className="space-y-5">
@@ -797,11 +752,37 @@ export function ProcessesTab({ onSwitchToOverview }: { onSwitchToOverview?: () =
       {!loading && processes.length > 0 && (
         <div className="space-y-3">
           {processes.map((proc) => (
-            <ProcessCard
-              key={proc.id}
-              process={proc}
-              onChecklistToggle={handleChecklistToggle}
-            />
+            <ProcessCard key={proc.id} process={proc} />
+          ))}
+        </div>
+      )}
+
+      {/* ── Suggested related processes ── */}
+      {!loading && suggestions.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
+            You may also need
+          </p>
+          {suggestions.map((sug) => (
+            <div
+              key={sug.title}
+              className="flex items-start justify-between gap-4 rounded-lg border border-navy-light bg-navy-light/30 px-4 py-3"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-neutral-900">{sug.title}</p>
+                <p className="mt-0.5 text-[10px] text-neutral-500">{sug.authority} · {sug.country}</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-neutral-600">{sug.reason}</p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="shrink-0 text-xs"
+                onClick={() => setShowModal(true)}
+              >
+                <Plus className="h-3 w-3" />
+                Add
+              </Button>
+            </div>
           ))}
         </div>
       )}

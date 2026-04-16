@@ -15,9 +15,8 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useProcesses } from "@/hooks/useProcesses";
-import { DEMO_DOCUMENTS } from "@/lib/data/documents";
-import { formatDateShort, categoryLabel } from "@/lib/utils";
+import { useProcessesContext } from "@/contexts/ProcessesContext";
+import { formatDateShort } from "@/lib/utils";
 import type { ChecklistItem, Process } from "@/types";
 
 const TODAY = new Date("2026-04-12");
@@ -40,7 +39,6 @@ interface RichChecklistItem extends ChecklistItem {
 
 function buildProcessChecklist(process: Process): RichChecklistItem[] {
   const items: RichChecklistItem[] = [];
-
   for (const step of process.steps) {
     for (const item of step.checklistItems ?? []) {
       items.push({
@@ -51,25 +49,6 @@ function buildProcessChecklist(process: Process): RichChecklistItem[] {
       });
     }
   }
-
-  // Include checklist items from linked documents
-  const linkedDocs = DEMO_DOCUMENTS.filter(
-    (d) => process.documentIds.includes(d.id) || (d.processIds ?? []).includes(process.id)
-  );
-  for (const doc of linkedDocs) {
-    for (const item of doc.preparationChecklist) {
-      // Don't duplicate if same id already present from step
-      if (!items.some((i) => i.id === item.id)) {
-        items.push({
-          ...item,
-          source: "document",
-          documentTitle: doc.title,
-          documentId: doc.id,
-        });
-      }
-    }
-  }
-
   return items;
 }
 
@@ -216,15 +195,15 @@ function ChecklistRow({
 
 // ── Process checklist section ──────────────────────────────────────────────
 
-function ProcessChecklist({ process }: { process: Process }) {
-  const [items, setItems] = useState<RichChecklistItem[]>(() =>
-    buildProcessChecklist(process)
-  );
-
-  const toggleItem = (id: string) =>
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, completed: !item.completed } : item))
-    );
+function ProcessChecklist({
+  process,
+  onToggleItem,
+}: {
+  process: Process;
+  onToggleItem: (processId: string, itemId: string) => void;
+}) {
+  // Derive items from live process data so toggling updates reactively
+  const items = buildProcessChecklist(process);
 
   const completed = items.filter((i) => i.completed).length;
   const total = items.length;
@@ -310,7 +289,7 @@ function ProcessChecklist({ process }: { process: Process }) {
                 <ChecklistRow
                   key={item.id}
                   item={item}
-                  onToggle={() => toggleItem(item.id)}
+                  onToggle={() => onToggleItem(process.id, item.id)}
                 />
               ))}
           </>
@@ -323,7 +302,7 @@ function ProcessChecklist({ process }: { process: Process }) {
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export function ChecklistsTab() {
-  const { processes } = useProcesses();
+  const { processes, toggleChecklistItem } = useProcessesContext();
   const activeProcesses = processes.filter((p) => p.status === "active");
 
   const totalOverdue = activeProcesses.reduce((sum, proc) => {
@@ -371,7 +350,7 @@ export function ChecklistsTab() {
       <div className="flex items-start gap-2.5 rounded-r-lg border-l-[3px] border-navy-light bg-navy-light/40 px-4 py-3">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-navy" strokeWidth={1.75} />
         <p className="text-[11px] leading-relaxed text-neutral-700">
-          Checklists draw from your process steps and linked documents. Items marked as complete are saved locally for this session only. Always verify completed actions against official records.
+          Checklists draw from your process steps. Completing an item saves automatically and updates the progress shown in the Overview. Always verify completed actions against official records.
         </p>
       </div>
 
@@ -385,7 +364,11 @@ export function ChecklistsTab() {
       ) : (
         <div className="space-y-5">
           {activeProcesses.map((proc) => (
-            <ProcessChecklist key={proc.id} process={proc} />
+            <ProcessChecklist
+              key={proc.id}
+              process={proc}
+              onToggleItem={toggleChecklistItem}
+            />
           ))}
         </div>
       )}

@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ExternalLink,
   FileText,
+  FolderUp,
   Info,
   Loader2,
   ShieldAlert,
@@ -311,10 +312,12 @@ function AnalysisResults({
 
 // ── Main tab ───────────────────────────────────────────────────────────────
 
+type SaveState = "idle" | "saving" | "saved" | "error";
+
 type TabState =
   | { stage: "idle" }
   | { stage: "analysing"; fileName: string }
-  | { stage: "done"; analysis: DocumentAnalysis; fileName: string }
+  | { stage: "done"; analysis: DocumentAnalysis; fileName: string; file: File | null }
   | { stage: "error"; message: string };
 
 export function AnalyseDocumentTab() {
@@ -324,6 +327,7 @@ export function AnalyseDocumentTab() {
   const [selectedProcessId, setSelectedProcessId] = useState<string>("");
   const [actionNote, setActionNote] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch user's processes for the selector
@@ -360,7 +364,7 @@ export function AnalyseDocumentTab() {
         return;
       }
 
-      setState({ stage: "done", analysis: data.analysis, fileName: file.name });
+      setState({ stage: "done", analysis: data.analysis, fileName: file.name, file });
     } catch {
       setState({ stage: "error", message: "Could not reach the analysis service. Please check your connection." });
     }
@@ -383,13 +387,33 @@ export function AnalyseDocumentTab() {
     setState({ stage: "analysing", fileName: "sample-document.pdf" });
     setActionNote("");
     setTimeout(() => {
-      setState({ stage: "done", analysis: DEMO_ANALYSIS, fileName: "sample-document.pdf" });
+      setState({ stage: "done", analysis: DEMO_ANALYSIS, fileName: "sample-document.pdf", file: null });
     }, 1800);
   }
 
   function reset() {
     setState({ stage: "idle" });
     setActionNote("");
+    setSaveState("idle");
+  }
+
+  async function saveToDrive() {
+    if (state.stage !== "done" || !state.file) return;
+    setSaveState("saving");
+    try {
+      const form = new FormData();
+      form.append("file", state.file);
+      const res = await fetch("/api/drive/upload-document", { method: "POST", body: form });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.error("[saveToDrive]", data.error);
+        setSaveState("error");
+      } else {
+        setSaveState("saved");
+      }
+    } catch {
+      setSaveState("error");
+    }
   }
 
   const isDone = state.stage === "done";
@@ -485,24 +509,53 @@ export function AnalyseDocumentTab() {
       {/* Results */}
       {isDone && (
         <>
-          {/* File header + reset */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-success/30 bg-success/10">
+          {/* File header + actions */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-success/30 bg-success/10">
                 <CheckCircle2 className="h-4 w-4 text-success" strokeWidth={1.75} />
               </div>
-              <div>
-                <p className="text-xs font-semibold text-neutral-900">{state.fileName}</p>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-neutral-900">{state.fileName}</p>
                 <p className="text-[10px] text-neutral-400">{state.analysis.summary}</p>
               </div>
             </div>
-            <button
-              onClick={reset}
-              className="flex items-center gap-1 rounded border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-xs text-neutral-500 hover:border-neutral-300 transition-colors"
-            >
-              <X className="h-3.5 w-3.5" />
-              New document
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {/* Save to Drive button — only for real users with an actual file */}
+              {state.file && session?.user?.id !== "demo" && (
+                <button
+                  onClick={saveToDrive}
+                  disabled={saveState === "saving" || saveState === "saved"}
+                  className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs transition-colors ${
+                    saveState === "saved"
+                      ? "border-success/30 bg-success/10 text-success"
+                      : saveState === "error"
+                      ? "border-danger/30 bg-danger/5 text-danger"
+                      : "border-neutral-200 bg-neutral-50 text-neutral-600 hover:border-neutral-300 hover:bg-white"
+                  }`}
+                >
+                  {saveState === "saving" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <FolderUp className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  )}
+                  {saveState === "saved"
+                    ? "Saved to Drive"
+                    : saveState === "error"
+                    ? "Save failed — retry"
+                    : saveState === "saving"
+                    ? "Saving…"
+                    : "Save to Drive"}
+                </button>
+              )}
+              <button
+                onClick={reset}
+                className="flex items-center gap-1 rounded border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-xs text-neutral-500 hover:border-neutral-300 transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+                New document
+              </button>
+            </div>
           </div>
 
           <Card>
